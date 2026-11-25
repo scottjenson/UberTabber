@@ -19,9 +19,11 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
   <key>CFBundleName</key><string>UberTabber</string>
   <key>CFBundleExecutable</key><string>UberTabber</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.2</string>
+  <key>CFBundleShortVersionString</key><string>0.3</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>UberTabber listens only while its list is open, so you can say the name of a window or tab.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Speech is recognized on this Mac to highlight the window or tab you name.</string>
 </dict>
 </plist>
 EOF

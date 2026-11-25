@@ -3,6 +3,7 @@ import AppKit
 struct TabInfo {
     let id: Int
     var windowId: Int
+    var index: Int
     var title: String
     var url: String
     var favIconUrl: String?
@@ -16,6 +17,7 @@ struct TabInfo {
               let windowId = d["windowId"] as? Int else { return nil }
         self.id = id
         self.windowId = windowId
+        self.index = d["index"] as? Int ?? 0
         self.title = d["title"] as? String ?? ""
         self.url = d["url"] as? String ?? ""
         self.favIconUrl = d["favIconUrl"] as? String
@@ -37,16 +39,18 @@ struct TabInfo {
     }
 }
 
-enum HistoryItem: Equatable {
-    case app(pid: pid_t)
+enum HistoryItem: Hashable {
+    case app(pid: pid_t)                        // a running app with no windows
+    case window(pid: pid_t, id: CGWindowID)
     case tab(id: Int)
 }
 
-/// Most-recently-used list of apps and Chrome tabs. Whatever becomes active
-/// moves to the top. Chrome itself never appears; its tabs stand in for it.
+/// Most-recently-used list of app windows and Chrome tabs. Whatever becomes
+/// active moves to the top. Chrome's windows never appear; its tabs stand in.
 final class History {
     static let chromeBundleID = "com.google.Chrome"
 
+    let windows = WindowTracker()
     private(set) var items: [HistoryItem] = []
     private(set) var tabs: [Int: TabInfo] = [:]
     var onChange: (() -> Void)?
@@ -54,55 +58,111 @@ final class History {
     /// Where Chrome sat in the seeded list, until the extension reports its current tab.
     private var chromeSlot: Int?
 
-    private var chromeIsFrontmost: Bool {
-        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Self.chromeBundleID
+    init() {
+        windows.onFocus = { [weak self] in self?.windowFocused($0) }
+        windows.onDestroy = { [weak self] in self?.windowDestroyed($0) }
+        windows.onChange = { [weak self] in self?.onChange?() }
+    }
+
+    /// Like Cmd-Tab, only apps with a Dock icon count (no permission dialogs,
+    /// helpers or menu-bar apps).
+    private static func counts(_ app: NSRunningApplication) -> Bool {
+        app.activationPolicy == .regular && app.processIdentifier != ProcessInfo.processInfo.processIdentifier
+    }
+
+    private var otherApps: [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications.filter { Self.counts($0) && $0.bundleIdentifier != Self.chromeBundleID }
+    }
+
+    private func isFrontmost(_ pid: pid_t) -> Bool {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+    }
+
+    /// Everything, for the switcher: the history first, then whatever has never
+    /// been used since launch (windows, windowless apps, then Chrome tabs in
+    /// Chrome's own order).
+    func allItems() -> [HistoryItem] {
+        var result = items
+        var seen = Set(items)
+        func add(_ item: HistoryItem) {
+            if seen.insert(item).inserted { result.append(item) }
+        }
+        windows.windows.values.sorted { $0.id < $1.id }.forEach { add(.window(pid: $0.pid, id: $0.id)) }
+        otherApps.filter { windows.count(of: $0.processIdentifier) == 0 }.forEach { add(.app(pid: $0.processIdentifier)) }
+        tabs.values.sorted { ($0.windowId, $0.index) < ($1.windowId, $1.index) }.forEach { add(.tab(id: $0.id)) }
+        return result
     }
 
     // MARK: Mac events
 
-    /// Fills the list at launch with the running Dock apps, in front-to-back
-    /// window order (the best guess at recency), then any without windows.
+    /// Fills the history at launch from the on-screen windows, front to back
+    /// (the best guess at recency). Everything else shows up via allItems().
     func seed() {
-        let regular = NSWorkspace.shared.runningApplications.filter {
-            $0.activationPolicy == .regular && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
-        }
-        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+        otherApps.forEach(windows.observe)
+        let chromePids = Set(NSRunningApplication.runningApplications(withBundleIdentifier: Self.chromeBundleID)
+            .map(\.processIdentifier))
+        let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []
-        var pids: [pid_t] = []
-        for window in windows where window[kCGWindowLayer as String] as? Int == 0 {
-            if let pid = (window[kCGWindowOwnerPID as String] as? Int).map(pid_t.init), !pids.contains(pid) {
-                pids.append(pid)
-            }
-        }
-        pids += regular.map(\.processIdentifier).filter { !pids.contains($0) }
-
-        for pid in pids {
-            guard let app = regular.first(where: { $0.processIdentifier == pid }) else { continue }
-            if app.bundleIdentifier == Self.chromeBundleID {
-                chromeSlot = items.count
-            } else {
-                items.append(.app(pid: pid))
+        for info in onScreen where info[kCGWindowLayer as String] as? Int == 0 {
+            guard let pid = (info[kCGWindowOwnerPID as String] as? Int).map(pid_t.init),
+                  let id = (info[kCGWindowNumber as String] as? Int).map(CGWindowID.init) else { continue }
+            if chromePids.contains(pid) {
+                if chromeSlot == nil { chromeSlot = items.count }
+            } else if windows.windows[id] != nil, !items.contains(.window(pid: pid, id: id)) {
+                items.append(.window(pid: pid, id: id))
             }
         }
         onChange?()
     }
 
+    func appLaunched(_ app: NSRunningApplication) {
+        guard Self.counts(app), app.bundleIdentifier != Self.chromeBundleID else { return }
+        windows.observe(app)
+        onChange?()
+    }
+
     func appActivated(_ app: NSRunningApplication) {
-        // Like Cmd-Tab, only apps with a Dock icon count (no permission
-        // dialogs, helpers or menu-bar apps). Chrome's own activation is
-        // ignored: the extension's windowFocused event says which tab is current.
-        guard app.activationPolicy == .regular,
-              app.bundleIdentifier != Self.chromeBundleID,
-              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-        touch(.app(pid: app.processIdentifier))
+        // Chrome's own activation is ignored: the extension's windowFocused
+        // event says which tab is current.
+        guard Self.counts(app), app.bundleIdentifier != Self.chromeBundleID else { return }
+        windows.observe(app)
+        let pid = app.processIdentifier
+        if let window = windows.focusedWindow(of: pid) {
+            touch(.window(pid: pid, id: window.id))
+        } else {
+            touch(.app(pid: pid))
+        }
     }
 
     func appTerminated(_ app: NSRunningApplication) {
+        let pid = app.processIdentifier
         if app.bundleIdentifier == Self.chromeBundleID {
             tabs.removeAll()
-            items.removeAll { if case .tab = $0 { return true } else { return false } }
         }
-        items.removeAll { $0 == .app(pid: app.processIdentifier) }
+        windows.forget(pid)
+        items.removeAll {
+            switch $0 {
+            case .app(let p), .window(let p, _): return p == pid
+            case .tab: return app.bundleIdentifier == Self.chromeBundleID
+            }
+        }
+        onChange?()
+    }
+
+    private func windowFocused(_ window: WindowInfo) {
+        // Background apps can shuffle their windows; only count what you're in.
+        if isFrontmost(window.pid) { touch(.window(pid: window.pid, id: window.id)) }
+    }
+
+    private func windowDestroyed(_ id: CGWindowID) {
+        guard let index = items.firstIndex(where: { if case .window(_, id) = $0 { return true } else { return false } }),
+              case .window(let pid, _) = items[index] else { onChange?(); return }
+        // An app left with no windows keeps the closed window's place.
+        if windows.count(of: pid) == 0 && !items.contains(.app(pid: pid)) {
+            items[index] = .app(pid: pid)
+        } else {
+            items.remove(at: index)
+        }
         onChange?()
     }
 
@@ -124,6 +184,7 @@ final class History {
     func tabActivated(_ tab: TabInfo) {
         tabs[tab.id] = tab
         // Tabs can change in background windows; only count it if you're in Chrome.
+        let chromeIsFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Self.chromeBundleID
         if chromeIsFrontmost { touch(.tab(id: tab.id)) } else { onChange?() }
     }
 
@@ -145,6 +206,8 @@ final class History {
 
     private func touch(_ item: HistoryItem) {
         items.removeAll { $0 == item }
+        // Once an app has a window in the history, its windowless entry goes.
+        if case .window(let pid, _) = item { items.removeAll { $0 == .app(pid: pid) } }
         items.insert(item, at: 0)
         onChange?()
     }

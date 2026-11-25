@@ -1,19 +1,27 @@
 import AppKit
 import ApplicationServices
+import Carbon
 
 /// Intercepts Option-Tab system-wide with a CGEvent tap (needs Accessibility).
-/// While the switcher is open it swallows keys: Tab / Shift-Tab and the arrow
-/// keys move, Esc cancels, releasing Option commits.
+/// While the switcher is open every key is swallowed and forwarded as a Key;
+/// releasing Option commits.
 final class HotKey {
+    enum Key {
+        case tab(reverse: Bool), left, right, up, down, escape, delete, enter
+        case character(String)
+    }
+
     var onShow: ((_ reverse: Bool) -> Void)?
-    var onMove: ((_ delta: Int) -> Void)?
+    var onKey: ((Key) -> Void)?
     var onCommit: (() -> Void)?
-    var onCancel: (() -> Void)?
 
     private var active = false
     private var tap: CFMachPort?
 
-    private enum Key { static let tab: Int64 = 48, escape: Int64 = 53, left: Int64 = 123, right: Int64 = 124 }
+    /// Close without committing (Esc, a click, Return).
+    func dismiss() {
+        active = false
+    }
 
     func start() {
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -56,7 +64,8 @@ final class HotKey {
         }
         let flags = event.flags
         let option = flags.contains(.maskAlternate)
-        let key = event.getIntegerValueField(.keyboardEventKeycode)
+        let shift = flags.contains(.maskShift)
+        let code = event.getIntegerValueField(.keyboardEventKeycode)
 
         switch type {
         case .flagsChanged:
@@ -66,30 +75,53 @@ final class HotKey {
             }
             return pass
         case .keyDown:
-            if key == Key.tab && option && !flags.contains(.maskCommand) && !flags.contains(.maskControl) {
-                let reverse = flags.contains(.maskShift)
-                if active {
-                    onMove?(reverse ? -1 : 1)
-                } else {
-                    active = true
-                    onShow?(reverse)
-                }
+            if !active {
+                guard code == kVK_Tab, option, !flags.contains(.maskCommand), !flags.contains(.maskControl) else { return pass }
+                active = true
+                onShow?(shift)
                 return nil
             }
-            guard active else { return pass }
-            switch key {
-            case Key.escape:
-                active = false
-                onCancel?()
-            case Key.left: onMove?(-1)
-            case Key.right: onMove?(1)
-            default: break
-            }
+            if let key = key(for: code, shift: shift) { onKey?(key) }
             return nil
         case .keyUp:
-            return active || (key == Key.tab && option) ? nil : pass
+            return active || (code == kVK_Tab && option) ? nil : pass
         default:
             return pass
         }
+    }
+
+    private func key(for code: Int64, shift: Bool) -> Key? {
+        switch Int(code) {
+        case kVK_Tab: return .tab(reverse: shift)
+        case kVK_LeftArrow: return .left
+        case kVK_RightArrow: return .right
+        case kVK_UpArrow: return .up
+        case kVK_DownArrow: return .down
+        case kVK_Escape: return .escape
+        case kVK_Delete: return .delete
+        case kVK_Return, kVK_ANSI_KeypadEnter: return .enter
+        default:
+            guard let text = Self.characters(for: CGKeyCode(code), shift: shift),
+                  !text.isEmpty,
+                  text.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { return nil }
+            return .character(text)
+        }
+    }
+
+    /// The character a key types without Option (the event itself carries the
+    /// Option-modified one, e.g. "å" for A).
+    private static func characters(for code: CGKeyCode, shift: Bool) -> String? {
+        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let raw = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return nil }
+        let data = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue() as Data
+        var deadKeys: UInt32 = 0
+        var chars = [UniChar](repeating: 0, count: 4)
+        var length = 0
+        let status = data.withUnsafeBytes { bytes in
+            UCKeyTranslate(bytes.bindMemory(to: UCKeyboardLayout.self).baseAddress!, code,
+                           UInt16(kUCKeyActionDown), shift ? UInt32(shiftKey >> 8) : 0, UInt32(LMGetKbdType()),
+                           OptionBits(kUCKeyTranslateNoDeadKeysBit), &deadKeys, chars.count, &length, &chars)
+        }
+        return status == noErr ? String(utf16CodeUnits: chars, count: length) : nil
     }
 }

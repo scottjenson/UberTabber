@@ -25,6 +25,7 @@ function tabInfo(tab) {
   return {
     id: tab.id,
     windowId: tab.windowId,
+    index: tab.index,
     title: tab.title,
     url: tab.url,
     favIconUrl: tab.favIconUrl,
