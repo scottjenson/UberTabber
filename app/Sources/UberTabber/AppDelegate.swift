@@ -51,7 +51,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotKey.onKey = { [weak self] key in self?.handleKey(key) }
         hotKey.onCommit = { [weak self] in self?.commitSwitcher() }
         hotKey.useCommand = UserDefaults.standard.bool(forKey: Self.useCommandKey)
-        switcher.model.listAnimation = ListAnimation(rawValue: UserDefaults.standard.integer(forKey: Self.listAnimationKey)) ?? .slide
         hotKey.start()
 
         switcher.model.onClick = { [weak self] index in
@@ -295,17 +294,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         shortcut.target = self
         shortcut.state = hotKey.useCommand ? .on : .off
         menu.addItem(shortcut)
-        let animations = NSMenu()
-        for style in ListAnimation.allCases {
-            let item = NSMenuItem(title: style.title, action: #selector(chooseListAnimation(_:)), keyEquivalent: "")
-            item.target = self
-            item.tag = style.rawValue
-            item.state = switcher.model.listAnimation == style ? .on : .off
-            animations.addItem(item)
-        }
-        let animationItem = NSMenuItem(title: "List Animation", action: nil, keyEquivalent: "")
-        animationItem.submenu = animations
-        menu.addItem(animationItem)
         let reveal = NSMenuItem(title: "Show Log in Finder", action: #selector(revealLog), keyEquivalent: "")
         reveal.target = self
         menu.addItem(reveal)
@@ -318,14 +306,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private static let useCommandKey = "useCommandTab"
-
-    private static let listAnimationKey = "listAnimation"
-
-    @objc private func chooseListAnimation(_ sender: NSMenuItem) {
-        guard let style = ListAnimation(rawValue: sender.tag) else { return }
-        switcher.model.listAnimation = style
-        UserDefaults.standard.set(style.rawValue, forKey: Self.listAnimationKey)
-    }
 
     @objc private func toggleShortcut() {
         hotKey.useCommand.toggle()
