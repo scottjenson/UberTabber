@@ -15,12 +15,17 @@ final class HotKey {
     var onKey: ((Key) -> Void)?
     var onCommit: (() -> Void)?
 
+    /// Once you start typing, releasing Option no longer switches; the
+    /// switcher stays open (keys still captured) until Return, a click or Esc.
+    var sticky = false
+
     private var active = false
     private var tap: CFMachPort?
 
-    /// Close without committing (Esc, a click, Return).
+    /// Close without committing on release (Esc, a click, Return).
     func dismiss() {
         active = false
+        sticky = false
     }
 
     func start() {
@@ -69,7 +74,7 @@ final class HotKey {
 
         switch type {
         case .flagsChanged:
-            if active && !option {
+            if active && !option && !sticky {
                 active = false
                 onCommit?()
             }

@@ -29,6 +29,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 EOF
 codesign --force --sign - -r='designated => identifier "org.jenson.UberTabber"' "$APP"
 
-pkill -x UberTabber || true
+# Wait for the old copy to exit, then give Launch Services a moment to notice.
+pkill -x UberTabber && while pgrep -x UberTabber >/dev/null; do sleep 0.1; done && sleep 1
 open "$APP"
 echo "Launched $PWD/$APP"

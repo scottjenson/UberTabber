@@ -80,40 +80,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .down:
             revealList()
             if model.selected < SwitcherModel.stripCount {
-                if model.visible.count > SwitcherModel.stripCount { model.selected = SwitcherModel.stripCount }
+                if !model.rows.isEmpty { model.selected = SwitcherModel.stripCount }
             } else {
                 move(1)
             }
         case .up:
             if model.selected >= SwitcherModel.stripCount { move(-1) }
         case .escape:
-            if model.query.isEmpty {
+            if model.searching {
+                stopSearching()
+            } else {
                 hotKey.dismiss()
                 closeSwitcher()
-            } else {
-                model.query = ""
-                model.selected = 0
             }
         case .delete:
-            if !model.query.isEmpty {
-                model.query.removeLast()
-                model.selected = 0
-            }
+            guard model.searching else { break }
+            model.query.removeLast()
+            if model.searching { model.selected = SwitcherModel.stripCount } else { stopSearching() }
         case .enter:
             hotKey.dismiss()
             commitSwitcher()
         case .character(let text):
             revealList()
+            hotKey.sticky = true
             model.query += text.lowercased()
-            model.selected = 0
+            model.selected = SwitcherModel.stripCount  // the best match, first row
         }
+    }
+
+    /// Back to browsing: selection returns to the strip.
+    private func stopSearching() {
+        let model = switcher.model
+        model.query = ""
+        model.selected = min(1, model.strip.count - 1)
     }
 
     private func move(_ delta: Int) {
         let model = switcher.model
-        let count = model.visible.count
-        guard count > 0 else { return }
-        model.selected = (model.selected + delta + count) % count
+        let order = model.selectable
+        guard !order.isEmpty else { return }
+        let position = order.firstIndex(of: model.selected) ?? 0
+        // Browsing wraps around; results stop at the ends.
+        let next = model.searching
+            ? min(max(position + delta, 0), order.count - 1)
+            : (position + delta + order.count) % order.count
+        model.selected = order[next]
         // Reaching the third item means you're hunting, not toggling.
         if model.selected >= 2 { revealList() }
     }
@@ -126,11 +137,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.listening = voice.isListening
     }
 
-    /// Voice highlights the best match among what's visible; it never switches.
+    /// Voice highlights the best match wherever it is (or among typed results);
+    /// it never switches.
     private func heard(_ text: String) {
         let model = switcher.model
         guard model.listVisible else { return }
-        if let index = Matcher.best(model.visible, text) { model.selected = index }
+        if model.searching {
+            if let row = Matcher.best(model.rows, text) { model.selected = SwitcherModel.stripCount + row }
+        } else if let index = Matcher.best(model.all, text) {
+            // Unfiltered, index i in `all` is tile i or row i - 8, which is selection index i.
+            model.selected = index
+        }
     }
 
     private func closeSwitcher() {
@@ -140,11 +157,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func commitSwitcher() {
-        let model = switcher.model
-        let visible = model.visible
+        let chosen = switcher.model.entry(at: switcher.model.selected)
         closeSwitcher()
-        guard model.selected < visible.count else { return }
-        switchTo(visible[model.selected].item)
+        if let chosen { switchTo(chosen.item) }
     }
 
     private func entry(for item: HistoryItem) -> Entry {

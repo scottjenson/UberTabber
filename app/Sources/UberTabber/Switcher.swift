@@ -17,19 +17,57 @@ struct Entry {
     let rest: String        // other searchable text
 }
 
+/// Selection indices: 0..<8 are strip tiles, 8... are list rows (so a row's
+/// index doesn't depend on how many tiles there are).
 final class SwitcherModel: ObservableObject {
     static let stripCount = 8
 
     @Published var all: [Entry] = [] { didSet { refilter() } }
     @Published var query = "" { didSet { refilter() } }
-    @Published private(set) var visible: [Entry] = []
+    /// List rows: everything after the strip, or while typing, the matches
+    /// from everything (strip included), best first.
+    @Published private(set) var rows: [Entry] = []
     @Published var selected = 0
     @Published var listVisible = false
     @Published var listening = false
     var onClick: ((Int) -> Void)?
 
+    var searching: Bool { !query.isEmpty }
+    /// The strip never filters, so it stays a stable picture of recent work.
+    var strip: [Entry] { Array(all.prefix(Self.stripCount)) }
+
+    /// What can be selected, in order. While typing, only the results.
+    var selectable: [Int] {
+        let rowIndices = rows.indices.map { $0 + Self.stripCount }
+        return searching ? rowIndices : Array(strip.indices) + rowIndices
+    }
+
+    private var lastMouse: NSPoint = .zero
+
+    /// Called when the switcher opens: wherever the pointer already sits
+    /// doesn't count as hovering.
+    func resetHover() {
+        lastMouse = NSEvent.mouseLocation
+    }
+
+    /// Moving the mouse over a tile or row selects it, like Cmd-Tab; the
+    /// keyboard then carries on from there. A pointer that merely sits there
+    /// while the panel appears or the list changes under it doesn't.
+    func hover(_ index: Int) {
+        let mouse = NSEvent.mouseLocation
+        guard mouse != lastMouse else { return }
+        lastMouse = mouse
+        if selectable.contains(index) && selected != index { selected = index }
+    }
+
+    func entry(at index: Int) -> Entry? {
+        if index < Self.stripCount { return strip.indices.contains(index) ? strip[index] : nil }
+        let row = index - Self.stripCount
+        return rows.indices.contains(row) ? rows[row] : nil
+    }
+
     private func refilter() {
-        visible = query.isEmpty ? all : Matcher.filter(all, query)
+        rows = searching ? Matcher.filter(all, query) : Array(all.dropFirst(Self.stripCount))
     }
 }
 
@@ -52,7 +90,7 @@ final class SwitcherPanel {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.becomesKeyOnlyIfNeeded = true
-        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.appearance = NSAppearance(named: .aqua)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.contentView = NSHostingView(rootView: SwitcherView(model: model))
         // Resize after SwiftUI has applied each change, keeping the strip in place.
@@ -68,6 +106,7 @@ final class SwitcherPanel {
         model.query = ""
         model.selected = selected
         model.listVisible = false
+        model.resetHover()
         let work = DispatchWorkItem { [weak self] in self?.present() }
         pendingShow = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
@@ -106,27 +145,26 @@ final class SwitcherPanel {
 
 private struct SwitcherView: View {
     @ObservedObject var model: SwitcherModel
+    static let tileSpacing: CGFloat = 19
 
     var body: some View {
-        let visible = model.visible
-        let strip = Array(visible.prefix(SwitcherModel.stripCount))
-        let list = Array(visible.dropFirst(SwitcherModel.stripCount))
-
         VStack(spacing: 10) {
-            HStack(spacing: 4) {
-                if strip.isEmpty {
-                    Text("No matches").font(.system(size: 15)).foregroundStyle(.secondary).padding(40)
-                }
-                ForEach(Array(strip.enumerated()), id: \.offset) { index, entry in
+            HStack(spacing: Self.tileSpacing) {
+                ForEach(Array(model.strip.enumerated()), id: \.offset) { index, entry in
                     TileView(entry: entry, selected: index == model.selected)
                         .onTapGesture { model.onClick?(index) }
+                        .onContinuousHover { if case .active = $0 { model.hover(index) } }
                 }
             }
-            .padding(14)
-            .background(VisualEffect().clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous)))
+            // While typing, results appear only in the list; the strip stays put, dimmed.
+            .opacity(model.searching ? 0.4 : 1)
+            .padding(.horizontal, 29)
+            .padding(.top, 32)
+            .padding(.bottom, 18)
+            .background(Backdrop(radius: 58))
 
             if model.listVisible {
-                ListPanel(model: model, rows: list)
+                ListPanel(model: model, rows: model.rows)
             }
         }
         .fixedSize()
@@ -151,6 +189,11 @@ private struct ListPanel: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
 
+            if rows.isEmpty && model.searching {
+                Text("No matches").font(.system(size: 13)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .frame(height: Self.rowHeight)
+            }
             if !rows.isEmpty {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -160,6 +203,7 @@ private struct ListPanel: View {
                                 RowView(entry: entry, selected: index == model.selected)
                                     .id(index)
                                     .onTapGesture { model.onClick?(index) }
+                                    .onContinuousHover { if case .active = $0 { model.hover(index) } }
                             }
                         }
                     }
@@ -167,29 +211,34 @@ private struct ListPanel: View {
                     .onChange(of: model.selected) { _, selected in
                         if selected >= SwitcherModel.stripCount { proxy.scrollTo(selected) }
                     }
+                    .onChange(of: model.query) {
+                        proxy.scrollTo(SwitcherModel.stripCount, anchor: .top)
+                    }
                 }
             }
         }
         .frame(width: 520, alignment: .leading)
         .padding(8)
-        .background(VisualEffect().clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous)))
+        .background(Backdrop(radius: 26))
     }
 }
 
 private struct RowView: View {
     let entry: Entry
     let selected: Bool
+    static let selection = Color(white: 0.3).opacity(0.35)
 
     var body: some View {
         HStack(spacing: 8) {
             IconView(icon: entry.icon, size: 26)
-            Text(entry.title).font(.system(size: 13)).foregroundStyle(.white).lineLimit(1)
-            Text(entry.subtitle).font(.system(size: 11)).foregroundStyle(.gray).lineLimit(1)
+            Text(entry.title).font(.system(size: 13)).foregroundStyle(.primary).lineLimit(1)
+            Text(entry.subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
         .frame(height: ListPanel.rowHeight)
-        .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Color.accentColor.opacity(0.6) : .clear))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(selected ? Self.selection : .clear))
         .contentShape(Rectangle())
     }
 }
@@ -198,30 +247,39 @@ private struct TileView: View {
     let entry: Entry
     let selected: Bool
 
+    /// Like Cmd-Tab: a dark rounded square behind the selected icon, and only
+    /// the selected item is labeled. The label may spill into the gaps beside
+    /// the tile (never past the panel's padding) and truncates beyond that.
+    /// App icon images include a transparent margin (~10% each side), so draw
+    /// them larger than the selection square and let the margin overflow; the
+    /// visible artwork (~104pt) then sits ~7pt inside the square, as in Cmd-Tab.
+    static let canvas: CGFloat = 128
+    static let square: CGFloat = 117
+
     var body: some View {
-        VStack(spacing: 6) {
-            IconView(icon: entry.icon, size: 104)
-            Text(String(entry.label.prefix(20)))
-                .font(.system(size: 12))
-                .foregroundStyle(.white)
+        VStack(spacing: 8) {
+            IconView(icon: entry.icon, size: Self.canvas)
+                .frame(width: Self.square, height: Self.square)
+                .background(RoundedRectangle(cornerRadius: 31, style: .continuous)
+                    .fill(selected ? Color(white: 0.25).opacity(0.55) : .clear))
+            Text(selected ? entry.label : " ")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color(white: 0.12))
                 .lineLimit(1)
-                .frame(width: 116)
+                .truncationMode(.tail)
+                .frame(width: Self.square + 2 * SwitcherView.tileSpacing)
+                .frame(width: Self.square)
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(selected ? Color.white.opacity(0.2) : .clear))
         .contentShape(Rectangle())
     }
 }
 
 /// App icon, or for a tab: the large site icon (or small favicon on a tinted
-/// tile) inset like an app icon, with a Chrome badge. Scales with `size`.
+/// tile) inset like an app icon's artwork, so tabs and apps look alike.
+/// Scales with `size`.
 private struct IconView: View {
     let icon: Entry.Icon
     let size: CGFloat
-    static let chromeIcon: NSImage? = NSWorkspace.shared
-        .urlForApplication(withBundleIdentifier: History.chromeBundleID)
-        .map { NSWorkspace.shared.icon(forFile: $0.path) }
 
     var body: some View {
         Group {
@@ -230,44 +288,36 @@ private struct IconView: View {
                 if let image { Image(nsImage: image).resizable().interpolation(.high) } else { Color.clear }
             case .tab(let large, let favicon, let tint):
                 let inner = size * 0.81
-                ZStack(alignment: .bottomTrailing) {
-                    Group {
-                        if let large {
-                            Image(nsImage: large).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
-                        } else {
-                            ZStack {
-                                Color(nsColor: tint ?? NSColor(white: 0.92, alpha: 1))
-                                if let favicon {
-                                    Image(nsImage: favicon).resizable().interpolation(.high)
-                                        .frame(width: inner * 0.52, height: inner * 0.52)
-                                } else {
-                                    Image(systemName: "globe").resizable().foregroundStyle(.gray)
-                                        .frame(width: inner * 0.45, height: inner * 0.45)
-                                }
+                Group {
+                    if let large {
+                        Image(nsImage: large).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
+                    } else {
+                        ZStack {
+                            Color(nsColor: tint ?? NSColor(white: 0.92, alpha: 1))
+                            if let favicon {
+                                Image(nsImage: favicon).resizable().interpolation(.high)
+                                    .frame(width: inner * 0.52, height: inner * 0.52)
+                            } else {
+                                Image(systemName: "globe").resizable().foregroundStyle(.gray)
+                                    .frame(width: inner * 0.45, height: inner * 0.45)
                             }
                         }
                     }
-                    .frame(width: inner, height: inner)
-                    .clipShape(RoundedRectangle(cornerRadius: inner * 0.225, style: .continuous))
-                    .frame(width: size, height: size)
-
-                    if let chrome = Self.chromeIcon {
-                        Image(nsImage: chrome).resizable().frame(width: size * 0.35, height: size * 0.35)
-                    }
                 }
+                .frame(width: inner, height: inner)
+                .clipShape(RoundedRectangle(cornerRadius: inner * 0.225, style: .continuous))
             }
         }
         .frame(width: size, height: size)
     }
 }
 
-private struct VisualEffect: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .hudWindow
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
+/// Cmd-Tab's backdrop, measured on screen: #9F9F9F, very round.
+private struct Backdrop: View {
+    let radius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .fill(Color(white: 0x9F / 255.0))
     }
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
