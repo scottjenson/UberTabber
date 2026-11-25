@@ -7,7 +7,9 @@ final class Voice {
     var onTranscript: ((String) -> Void)?
 
     private let recognizer = SFSpeechRecognizer()
-    private let engine = AVAudioEngine()
+    /// Made fresh for each listen and released after: macOS keeps the mic
+    /// indicator on for as long as an engine that has used the input exists.
+    private var engine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var authorized = false
@@ -34,6 +36,7 @@ final class Voice {
         request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         request.contextualStrings = Array(hints.prefix(100))
 
+        let engine = AVAudioEngine()
         let input = engine.inputNode
         input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
             request.append(buffer)
@@ -45,6 +48,7 @@ final class Voice {
             input.removeTap(onBus: 0)
             return
         }
+        self.engine = engine
         self.request = request
         task = recognizer.recognitionTask(with: request) { [weak self] result, _ in
             guard let text = result?.bestTranscription.formattedString else { return }
@@ -54,8 +58,9 @@ final class Voice {
 
     func stop() {
         guard task != nil else { return }
-        engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine?.inputNode.removeTap(onBus: 0)
+        engine = nil
         request?.endAudio()
         task?.cancel()
         task = nil
