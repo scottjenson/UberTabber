@@ -2,9 +2,9 @@ import AppKit
 import ApplicationServices
 import Carbon
 
-/// Intercepts Option-Tab system-wide with a CGEvent tap (needs Accessibility).
-/// While the switcher is open every key is swallowed and forwarded as a Key;
-/// releasing Option commits.
+/// Intercepts Option-Tab (or Command-Tab) system-wide with a CGEvent tap (needs
+/// Accessibility). While the switcher is open every key is swallowed and
+/// forwarded as a Key; releasing the modifier commits.
 final class HotKey {
     enum Key {
         case tab(reverse: Bool), left, right, up, down, escape, delete, enter
@@ -18,6 +18,12 @@ final class HotKey {
     /// Once you start typing, releasing Option no longer switches; the
     /// switcher stays open (keys still captured) until Return, a click or Esc.
     var sticky = false
+
+    /// The modifier held with Tab: Option (default, so Cmd-Tab stays Apple's
+    /// for comparison) or Command (replaces Apple's switcher).
+    var useCommand = false
+    private var trigger: CGEventFlags { useCommand ? .maskCommand : .maskAlternate }
+    private var other: CGEventFlags { useCommand ? .maskAlternate : .maskCommand }
 
     private var active = false
     private var tap: CFMachPort?
@@ -68,20 +74,20 @@ final class HotKey {
             return pass
         }
         let flags = event.flags
-        let option = flags.contains(.maskAlternate)
+        let held = flags.contains(trigger)
         let shift = flags.contains(.maskShift)
         let code = event.getIntegerValueField(.keyboardEventKeycode)
 
         switch type {
         case .flagsChanged:
-            if active && !option && !sticky {
+            if active && !held && !sticky {
                 active = false
                 onCommit?()
             }
             return pass
         case .keyDown:
             if !active {
-                guard code == kVK_Tab, option, !flags.contains(.maskCommand), !flags.contains(.maskControl) else { return pass }
+                guard code == kVK_Tab, held, !flags.contains(other), !flags.contains(.maskControl) else { return pass }
                 active = true
                 onShow?(shift)
                 return nil
@@ -89,7 +95,7 @@ final class HotKey {
             if let key = key(for: code, shift: shift) { onKey?(key) }
             return nil
         case .keyUp:
-            return active || (code == kVK_Tab && option) ? nil : pass
+            return active || (code == kVK_Tab && held) ? nil : pass
         default:
             return pass
         }

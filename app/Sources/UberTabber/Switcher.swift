@@ -17,6 +17,21 @@ struct Entry {
     let rest: String        // other searchable text
 }
 
+/// How the list arrives (an experiment; chosen from the menu-bar icon).
+enum ListAnimation: Int, CaseIterable {
+    case drop = 1, unroll, stagger, dropStagger, slide
+
+    var title: String {
+        switch self {
+        case .drop: return "1. Drop and fade"
+        case .unroll: return "2. Unroll"
+        case .stagger: return "3. Staggered rows"
+        case .dropStagger: return "4. Drop plus stagger"
+        case .slide: return "5. Slide out and bounce"
+        }
+    }
+}
+
 /// Selection indices: 0..<8 are strip tiles, 8... are list rows (so a row's
 /// index doesn't depend on how many tiles there are).
 final class SwitcherModel: ObservableObject {
@@ -30,6 +45,7 @@ final class SwitcherModel: ObservableObject {
     @Published var selected = 0
     @Published var listVisible = false
     @Published var listening = false
+    var listAnimation = ListAnimation.slide
     var onClick: ((Int) -> Void)?
 
     var searching: Bool { !query.isEmpty }
@@ -162,6 +178,7 @@ private struct SwitcherView: View {
             .padding(.top, 32)
             .padding(.bottom, 18)
             .background(Backdrop(radius: 58))
+            .zIndex(1)  // the list slides out from behind the strip
 
             if model.listVisible {
                 ListPanel(model: model, rows: model.rows)
@@ -177,7 +194,58 @@ private struct ListPanel: View {
     static let rowHeight: CGFloat = 34
     static let maxRows = 12
 
+    /// Entrance animation; the list is rebuilt each time it opens, so this
+    /// starts false. Later changes (typing) aren't animated.
+    @State private var shown = false
+    private var style: ListAnimation { model.listAnimation }
+    private var drops: Bool { style == .drop || style == .dropStagger }
+
+    /// Delay before row `offset` appears, for the staggered styles (visible rows only).
+    private func rowDelay(_ offset: Int) -> Double? {
+        guard offset < Self.maxRows else { return nil }
+        switch style {
+        case .stagger: return 0.05 + Double(offset) * 0.012
+        case .dropStagger: return 0.03 + Double(offset) * 0.008
+        default: return nil
+        }
+    }
+
+    private var panelAnimation: Animation {
+        switch style {
+        case .drop, .dropStagger: return .spring(duration: 0.18, bounce: 0.25)
+        case .unroll: return .easeOut(duration: 0.2)
+        case .stagger: return .easeOut(duration: 0.1)
+        // A light spring: one small overshoot past its resting place, then back.
+        case .slide: return .spring(duration: 0.25, bounce: 0.25)
+        }
+    }
+
+    /// Starting offset: a little dip for the drops; for the slide, the whole
+    /// list's height (estimated generously), so it starts fully hidden behind the strip.
+    private var startOffset: CGFloat {
+        if drops { return -12 }
+        if style == .slide { return -(CGFloat(min(rows.count, Self.maxRows)) * Self.rowHeight + 60) }
+        return 0
+    }
+
     var body: some View {
+        content
+            .opacity(style == .unroll || style == .slide || shown ? 1 : 0)
+            .offset(y: shown ? 0 : startOffset)
+            .mask(alignment: .top) {
+                // The slide's mask reaches up behind the strip (across the gap
+                // between them), so the list emerges from the strip's bottom edge.
+                Rectangle()
+                    .scaleEffect(x: 1, y: style == .unroll && !shown ? 0.01 : 1, anchor: .top)
+                    .padding(.top, style == .slide ? -30 : 0)
+                    .padding(.bottom, -16)
+            }
+            // Transparent room below, so a spring's overshoot isn't cut off by the window edge.
+            .padding(.bottom, 16)
+            .onAppear { withAnimation(panelAnimation) { shown = true } }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: model.listening ? "mic.fill" : "magnifyingglass")
@@ -204,6 +272,7 @@ private struct ListPanel: View {
                                     .id(index)
                                     .onTapGesture { model.onClick?(index) }
                                     .onContinuousHover { if case .active = $0 { model.hover(index) } }
+                                    .modifier(RowEntrance(shown: shown, delay: rowDelay(offset)))
                             }
                         }
                     }
@@ -220,6 +289,23 @@ private struct ListPanel: View {
         .frame(width: 520, alignment: .leading)
         .padding(8)
         .background(Backdrop(radius: 26))
+    }
+}
+
+/// A row fading and rising into place after `delay` (no effect without one).
+private struct RowEntrance: ViewModifier {
+    let shown: Bool
+    let delay: Double?
+
+    func body(content: Content) -> some View {
+        if let delay {
+            content
+                .opacity(shown ? 1 : 0)
+                .offset(y: shown ? 0 : 6)
+                .animation(.easeOut(duration: 0.1).delay(delay), value: shown)
+        } else {
+            content
+        }
     }
 }
 

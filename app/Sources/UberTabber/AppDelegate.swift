@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            self?.log.write(["type": "appTerminated", "bundleId": app.bundleIdentifier ?? "", "name": app.localizedName ?? ""])
             self?.history.appTerminated(app)
         }
 
@@ -49,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotKey.onShow = { [weak self] reverse in self?.showSwitcher(reverse: reverse) }
         hotKey.onKey = { [weak self] key in self?.handleKey(key) }
         hotKey.onCommit = { [weak self] in self?.commitSwitcher() }
+        hotKey.useCommand = UserDefaults.standard.bool(forKey: Self.useCommandKey)
+        switcher.model.listAnimation = ListAnimation(rawValue: UserDefaults.standard.integer(forKey: Self.listAnimationKey)) ?? .slide
         hotKey.start()
 
         switcher.model.onClick = { [weak self] index in
@@ -68,11 +71,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let stripCount = min(entries.count, SwitcherModel.stripCount)
         let selected = entries.count < 2 ? 0 : (reverse ? stripCount - 1 : 1)
         switcher.open(entries, selected: selected)
+        // The strip appears after 0.15 s; the list follows after a further pause.
+        scheduleList(after: 0.15 + Self.listDelay)
+    }
+
+    /// The list drops down once you pause on the strip (you're looking, not
+    /// tabbing); every key press restarts the wait.
+    private static let listDelay = 0.5
+    private var listTimer: DispatchWorkItem?
+
+    private func scheduleList(after delay: TimeInterval) {
+        listTimer?.cancel()
+        guard !switcher.model.listVisible else { return }
+        let work = DispatchWorkItem { [weak self] in self?.revealList() }
+        listTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func handleKey(_ key: HotKey.Key) {
         let model = switcher.model
         switcher.present()
+        scheduleList(after: Self.listDelay)
         switch key {
         case .tab(let reverse): move(reverse ? -1 : 1)
         case .left: move(-1)
@@ -125,8 +144,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ? min(max(position + delta, 0), order.count - 1)
             : (position + delta + order.count) % order.count
         model.selected = order[next]
-        // Reaching the third item means you're hunting, not toggling.
-        if model.selected >= 2 { revealList() }
     }
 
     private func revealList() {
@@ -151,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func closeSwitcher() {
+        listTimer?.cancel()
         voice.stop()
         switcher.model.listening = false
         switcher.hide()
@@ -272,6 +290,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        let shortcut = NSMenuItem(title: "Use Command-Tab instead of Option-Tab",
+                                  action: #selector(toggleShortcut), keyEquivalent: "")
+        shortcut.target = self
+        shortcut.state = hotKey.useCommand ? .on : .off
+        menu.addItem(shortcut)
+        let animations = NSMenu()
+        for style in ListAnimation.allCases {
+            let item = NSMenuItem(title: style.title, action: #selector(chooseListAnimation(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = style.rawValue
+            item.state = switcher.model.listAnimation == style ? .on : .off
+            animations.addItem(item)
+        }
+        let animationItem = NSMenuItem(title: "List Animation", action: nil, keyEquivalent: "")
+        animationItem.submenu = animations
+        menu.addItem(animationItem)
         let reveal = NSMenuItem(title: "Show Log in Finder", action: #selector(revealLog), keyEquivalent: "")
         reveal.target = self
         menu.addItem(reveal)
@@ -281,6 +315,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func select(_ sender: NSMenuItem) {
         guard sender.tag < history.items.count else { return }
         switchTo(history.items[sender.tag])
+    }
+
+    private static let useCommandKey = "useCommandTab"
+
+    private static let listAnimationKey = "listAnimation"
+
+    @objc private func chooseListAnimation(_ sender: NSMenuItem) {
+        guard let style = ListAnimation(rawValue: sender.tag) else { return }
+        switcher.model.listAnimation = style
+        UserDefaults.standard.set(style.rawValue, forKey: Self.listAnimationKey)
+    }
+
+    @objc private func toggleShortcut() {
+        hotKey.useCommand.toggle()
+        UserDefaults.standard.set(hotKey.useCommand, forKey: Self.useCommandKey)
     }
 
     @objc private func revealLog() {

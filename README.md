@@ -37,14 +37,14 @@ This is an experiment, not a product. Expect rough edges.
 - **Move** with Tab / Shift-Tab, the arrow keys, or the mouse (moving the pointer over an item selects it, and the keyboard carries on from there).
 - **Switch** by releasing Option, pressing Return, or clicking. **Esc** cancels.
 
-**Finding older items.** Reaching the third item, pressing ↓, or typing drops down a list of everything else under the strip, in order of use, with things you haven't touched since launch at the bottom (including every open Chrome tab).
+**Finding older items.** Pausing on the strip for half a second (each key press restarts the wait, so steady tabbing doesn't trigger it), pressing ↓, or typing drops down a list of everything else under the strip, in order of use, with things you haven't touched since launch at the bottom (including every open Chrome tab).
 
 - **Type** to search everything. The strip stays put (dimmed) and the results appear in the list, best match first and selected. Once you've typed, you can let go of Option; the switcher stays open until Return, a click, or Esc. Backspace edits, Esc clears the search, a second Esc closes.
 - **Say** a name while the list is open (the mic icon turns red). Voice highlights the best match, in the strip or the list, but never switches by itself: release Option to confirm. The mic only runs while the list is open, and recognition happens on your Mac.
 
 **Matching** favors what you'd call something: a tab's title (without the site name), the start of a window's title, or the app's name. Saying or typing "projects" finds a Finder window called *Projects* before a tab called *Stitch - Projects*. Matching is at the start of words and ignores plurals ("project" finds "Projects").
 
-The **menu-bar icon** shows the extension's connection status and the same history; clicking an entry switches to it.
+The **menu-bar icon** shows the extension's connection status and the same history; clicking an entry switches to it. Its **Use Command-Tab instead of Option-Tab** item replaces Apple's switcher with UberTabber (everything above then works with Command in place of Option). It's remembered across launches, and Apple's Command-Tab returns whenever UberTabber isn't running.
 
 ## Known limitations
 

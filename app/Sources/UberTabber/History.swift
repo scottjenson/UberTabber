@@ -82,6 +82,7 @@ final class History {
     /// been used since launch (windows, windowless apps, then Chrome tabs in
     /// Chrome's own order).
     func allItems() -> [HistoryItem] {
+        pruneQuitApps()
         var result = items
         var seen = Set(items)
         func add(_ item: HistoryItem) {
@@ -202,6 +203,21 @@ final class History {
         tabs[id] = nil
         items.removeAll { $0 == .tab(id: id) }
         onChange?()
+    }
+
+    /// Safety net: a late notification can re-add an app just after it quits
+    /// (it showed as a blank tile), so drop anything whose process is gone.
+    private func pruneQuitApps() {
+        func gone(_ pid: pid_t) -> Bool {
+            NSRunningApplication(processIdentifier: pid).map(\.isTerminated) ?? true
+        }
+        for pid in Set(windows.windows.values.map(\.pid)) where gone(pid) { windows.forget(pid) }
+        items.removeAll {
+            switch $0 {
+            case .app(let pid), .window(let pid, _): return gone(pid)
+            case .tab: return false
+            }
+        }
     }
 
     private func touch(_ item: HistoryItem) {
