@@ -13,31 +13,24 @@ struct Entry {
     let title: String       // full, in a list row
     let subtitle: String    // domain or app name, in gray
     let icon: Icon
-
-    /// Typing filter: every typed word must appear somewhere.
-    func matches(_ query: String) -> Bool {
-        let haystack = "\(title) \(label) \(subtitle)".lowercased()
-        return query.lowercased().split(separator: " ").allSatisfy { haystack.contains($0) }
-    }
-
-    /// Voice: how many spoken words (3+ letters) appear in this entry.
-    func score(_ spoken: String) -> Int {
-        let haystack = "\(title) \(label) \(subtitle)".lowercased()
-        return spoken.lowercased().split(separator: " ").filter { $0.count >= 3 && haystack.contains($0) }.count
-    }
+    let names: [String]     // what you'd call it, for matching (see Matcher)
+    let rest: String        // other searchable text
 }
 
 final class SwitcherModel: ObservableObject {
     static let stripCount = 8
 
-    @Published var all: [Entry] = []
-    @Published var query = ""
+    @Published var all: [Entry] = [] { didSet { refilter() } }
+    @Published var query = "" { didSet { refilter() } }
+    @Published private(set) var visible: [Entry] = []
     @Published var selected = 0
     @Published var listVisible = false
     @Published var listening = false
     var onClick: ((Int) -> Void)?
 
-    var visible: [Entry] { query.isEmpty ? all : all.filter { $0.matches(query) } }
+    private func refilter() {
+        visible = query.isEmpty ? all : Matcher.filter(all, query)
+    }
 }
 
 /// Floating, non-activating panel styled after the macOS Cmd-Tab switcher:

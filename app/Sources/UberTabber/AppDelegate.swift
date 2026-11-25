@@ -130,9 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func heard(_ text: String) {
         let model = switcher.model
         guard model.listVisible else { return }
-        let scores = model.visible.map { $0.score(text) }
-        guard let best = scores.max(), best > 0, let index = scores.firstIndex(of: best) else { return }
-        model.selected = index
+        if let index = Matcher.best(model.visible, text) { model.selected = index }
     }
 
     private func closeSwitcher() {
@@ -154,14 +152,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .app(let pid):
             let app = NSRunningApplication(processIdentifier: pid)
             let name = app?.localizedName ?? ""
-            return Entry(item: item, label: name, title: name, subtitle: "No open windows", icon: .app(app?.icon))
+            return Entry(item: item, label: name, title: name, subtitle: "No open windows", icon: .app(app?.icon),
+                         names: [name], rest: "")
         case .window(let pid, let id):
             let app = NSRunningApplication(processIdentifier: pid)
             let name = app?.localizedName ?? ""
             let title = history.windows.windows[id]?.title ?? ""
             // Under a tile, the app name is enough unless the app has several windows.
             let label = history.windows.count(of: pid) > 1 && !title.isEmpty ? title : name
-            return Entry(item: item, label: label, title: title.isEmpty ? name : title, subtitle: name, icon: .app(app?.icon))
+            // "History.swift — UberTabber" is called "History.swift" (or by its app).
+            let firstPart = title.replacingOccurrences(of: " [-–—|] .*", with: "", options: .regularExpression)
+            return Entry(item: item, label: label, title: title.isEmpty ? name : title, subtitle: name, icon: .app(app?.icon),
+                         names: [firstPart, name], rest: title)
         case .tab(let id):
             let tab = history.tabs[id]
             return Entry(item: item,
@@ -170,7 +172,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                          subtitle: tab?.host ?? "",
                          icon: .tab(large: tab.flatMap { icons.largeIcon(host: $0.host) },
                                     favicon: icons.favicon(tab?.favIconUrl),
-                                    tint: icons.tint(tab?.favIconUrl)))
+                                    tint: icons.tint(tab?.favIconUrl)),
+                         names: [tab?.shortTitle ?? ""],
+                         rest: "\(tab?.title ?? "") \(tab?.host ?? "")")
         }
     }
 
