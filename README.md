@@ -33,7 +33,7 @@ This is an experiment, not a product. Expect rough edges.
 
 **Option-Tab** opens the switcher after a short delay, so a quick tap-and-release just flips back to what you were last doing, with no flash.
 
-- **The strip** shows the 8 most recent items, with the second one selected. Each app window and each Chrome tab is its own item; Chrome itself never appears, its tabs stand in for it. Apps with no open windows appear once, by name.
+- **The strip** shows the 8 most recent items, with the second one selected. Each app window and each Chrome tab is its own item; Chrome itself never appears, its tabs stand in for it. A window is labeled with its title, like a tab. Apps with no open windows appear once, by name; menu-bar apps only appear while one of their windows is open.
 - **Move** with Tab / Shift-Tab, the arrow keys, or the mouse (moving the pointer over an item selects it, and the keyboard carries on from there).
 - **Switch** by releasing Option, pressing Return, or clicking. **Esc** cancels.
 
@@ -56,7 +56,7 @@ The **menu-bar icon** shows the extension's connection status and the same histo
 
 ## How it works
 
-- `extension/`: Chrome extension (Manifest V3). Reports tab and window focus events, tab titles and each site's largest icon to the app over a local WebSocket (`ws://127.0.0.1:47821`), and switches tabs when asked. No history logic.
+- `extension/`: Chrome extension (Manifest V3). Reports tab and window focus events, tab titles and each site's largest icon to the app over a local WebSocket (`ws://127.0.0.1:47821`), and switches tabs when asked. No history logic. The app accepts connections only from a Chrome extension, so web pages can't connect to it.
 - `app/`: Swift menu-bar app. Tracks app windows through the Accessibility API, merges them with the extension's tab events into one most-recently-used history, and draws the switcher. Whatever becomes active moves to the top.
 
 ## Privacy

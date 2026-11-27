@@ -106,11 +106,32 @@ async function findIcon(tab) {
 }
 
 async function handleCommand(cmd) {
-  if (cmd.cmd === "activate") {
-    await chrome.tabs.update(cmd.tabId, { active: true });
-    await chrome.windows.update(cmd.windowId, { focused: true });
-  }
+  if (cmd.cmd === "activate") activate(cmd);
 }
+
+// Switch to a tab. Tabs left alone for a while can be unloaded by Chrome and
+// come back with a new ID, so if the ID is gone, look for the same page by URL
+// and tell the app the new ID. If it's really gone, say so and resync.
+async function activate({ tabId, url }) {
+  let tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab && url) {
+    tab = (await chrome.tabs.query({})).find((t) => t.url === url) || null;
+    if (tab) send({ type: "tabReplaced", oldTabId: tabId, tab: tabInfo(tab) });
+  }
+  if (!tab) {
+    send({ type: "activateFailed", tabId, url });
+    sendSnapshot();
+    return;
+  }
+  await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+  await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+}
+
+// Chrome swaps in a new tab ID when it unloads or reloads a tab in the background.
+chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+  const tab = await chrome.tabs.get(addedTabId).catch(() => null);
+  if (tab) send({ type: "tabReplaced", oldTabId: removedTabId, tab: tabInfo(tab) });
+});
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   const tab = await chrome.tabs.get(tabId);

@@ -10,12 +10,21 @@ final class ExtensionServer {
     private var connections: [NWConnection] = []
     var onMessage: (([String: Any]) -> Void)?
     var onConnectionChange: ((Bool) -> Void)?
+    var onRejected: ((_ origin: String) -> Void)?
     var isConnected: Bool { !connections.isEmpty }
 
     func start() throws {
         let params = NWParameters.tcp
         let ws = NWProtocolWebSocket.Options()
         ws.autoReplyPing = true
+        // Any web page can open a WebSocket to localhost, so only accept the
+        // extension. Pages can't fake the Origin header.
+        ws.setClientRequestHandler(.main) { [weak self] _, headers in
+            let origin = headers.first { $0.name.lowercased() == "origin" }?.value ?? ""
+            let ok = origin.hasPrefix("chrome-extension://")
+            if !ok { self?.onRejected?(origin) }
+            return NWProtocolWebSocket.Response(status: ok ? .accept : .reject, subprotocol: nil)
+        }
         params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: Self.port)
         params.allowLocalEndpointReuse = true
@@ -57,7 +66,9 @@ final class ExtensionServer {
             guard let self else { return }
             let meta = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
                 as? NWProtocolWebSocket.Metadata
-            if error != nil || meta?.opcode == .close || (data == nil && context == nil) {
+            // No WebSocket metadata means the stream ended (or the handshake
+            // was rejected); receiving again would spin.
+            if error != nil || meta == nil || meta?.opcode == .close {
                 self.drop(c)
                 return
             }

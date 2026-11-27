@@ -70,6 +70,15 @@ final class History {
         app.activationPolicy == .regular && app.processIdentifier != ProcessInfo.processInfo.processIdentifier
     }
 
+    /// Declared a menu-bar app (LSUIElement) in its Info.plist, even if it has
+    /// since turned itself regular (ExpressVPN does). Such apps appear only
+    /// through their windows, never on their own.
+    private static func isMenuBarApp(_ pid: pid_t) -> Bool {
+        guard let url = NSRunningApplication(processIdentifier: pid)?.bundleURL,
+              let value = Bundle(url: url)?.object(forInfoDictionaryKey: "LSUIElement") else { return false }
+        return (value as? Bool) ?? ((value as? String) == "1")
+    }
+
     private var otherApps: [NSRunningApplication] {
         NSWorkspace.shared.runningApplications.filter { Self.counts($0) && $0.bundleIdentifier != Self.chromeBundleID }
     }
@@ -89,7 +98,9 @@ final class History {
             if seen.insert(item).inserted { result.append(item) }
         }
         windows.windows.values.sorted { $0.id < $1.id }.forEach { add(.window(pid: $0.pid, id: $0.id)) }
-        otherApps.filter { windows.count(of: $0.processIdentifier) == 0 }.forEach { add(.app(pid: $0.processIdentifier)) }
+        otherApps.map(\.processIdentifier)
+            .filter { windows.count(of: $0) == 0 && !Self.isMenuBarApp($0) }
+            .forEach { add(.app(pid: $0)) }
         tabs.values.sorted { ($0.windowId, $0.index) < ($1.windowId, $1.index) }.forEach { add(.tab(id: $0.id)) }
         return result
     }
@@ -170,7 +181,7 @@ final class History {
     // MARK: Extension events
 
     func snapshot(_ all: [TabInfo], lastFocusedWindowId: Int?) {
-        tabs = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+        tabs = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         items.removeAll { if case .tab(let id) = $0 { return tabs[id] == nil } else { return false } }
         // First report after launch: Chrome's current tab takes Chrome's seeded place.
         if let slot = chromeSlot,
@@ -199,6 +210,19 @@ final class History {
         onChange?()
     }
 
+    /// Chrome gave a tab a new ID (it unloaded a long-unused tab, for one): the
+    /// tab keeps its place in the history.
+    func tabReplaced(_ oldId: Int, with tab: TabInfo) {
+        tabs[oldId] = nil
+        tabs[tab.id] = tab
+        if items.contains(.tab(id: tab.id)) {
+            items.removeAll { $0 == .tab(id: oldId) }  // the new ID already has a place
+        } else if let index = items.firstIndex(of: .tab(id: oldId)) {
+            items[index] = .tab(id: tab.id)
+        }
+        onChange?()
+    }
+
     func tabRemoved(_ id: Int) {
         tabs[id] = nil
         items.removeAll { $0 == .tab(id: id) }
@@ -206,15 +230,18 @@ final class History {
     }
 
     /// Safety net: a late notification can re-add an app just after it quits
-    /// (it showed as a blank tile), so drop anything whose process is gone.
+    /// (it showed as a blank tile), and menu-bar apps like Shottr turn regular
+    /// only while showing a window. Drop anything that no longer counts.
     private func pruneQuitApps() {
         func gone(_ pid: pid_t) -> Bool {
-            NSRunningApplication(processIdentifier: pid).map(\.isTerminated) ?? true
+            guard let app = NSRunningApplication(processIdentifier: pid) else { return true }
+            return app.isTerminated || !Self.counts(app)
         }
         for pid in Set(windows.windows.values.map(\.pid)) where gone(pid) { windows.forget(pid) }
         items.removeAll {
             switch $0 {
-            case .app(let pid), .window(let pid, _): return gone(pid)
+            case .app(let pid): return gone(pid) || Self.isMenuBarApp(pid)
+            case .window(let pid, _): return gone(pid)
             case .tab: return false
             }
         }

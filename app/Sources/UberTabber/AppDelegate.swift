@@ -29,7 +29,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.history.appTerminated(app)
         }
 
+        // Accessibility calls to other apps run on the main thread, which also
+        // runs the keyboard event tap. A hung app would otherwise stall every
+        // keystroke system-wide for up to the 6 s default.
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.25)
+
         server.onMessage = { [weak self] in self?.handle($0) }
+        server.onRejected = { [weak self] origin in
+            self?.log.write(["type": "extensionRejected", "origin": origin])
+        }
         server.onConnectionChange = { [weak self] connected in
             self?.log.write(["type": connected ? "extensionConnected" : "extensionDisconnected"])
         }
@@ -190,10 +198,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let app = NSRunningApplication(processIdentifier: pid)
             let name = app?.localizedName ?? ""
             let title = history.windows.windows[id]?.title ?? ""
-            // Under a tile, the app name is enough unless the app has several windows.
-            let label = history.windows.count(of: pid) > 1 && !title.isEmpty ? title : name
             // "History.swift — UberTabber" is called "History.swift" (or by its app).
             let firstPart = title.replacingOccurrences(of: " [-–—|] .*", with: "", options: .regularExpression)
+            // Like a tab, a window's tile shows its own name; the icon says which app.
+            let label = firstPart.isEmpty ? name : firstPart
             return Entry(item: item, label: label, title: title.isEmpty ? name : title, subtitle: name, icon: .app(app?.icon),
                          names: [firstPart, name], rest: title)
         case .tab(let id):
@@ -219,7 +227,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             history.windows.raise(id)
         case .tab(let id):
             guard let tab = history.tabs[id] else { return }
-            server.send(["cmd": "activate", "tabId": tab.id, "windowId": tab.windowId])
+            // The URL lets the extension find the tab if Chrome has given it a new ID.
+            log.write(["type": "activateTab", "tabId": tab.id, "url": tab.url])
+            server.send(["cmd": "activate", "tabId": tab.id, "windowId": tab.windowId, "url": tab.url])
             if let chrome = NSRunningApplication.runningApplications(withBundleIdentifier: History.chromeBundleID).first {
                 bringToFront(chrome.processIdentifier)
             }
@@ -257,7 +267,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let tab = TabInfo(msg["tab"]) { history.windowFocused(tab) }
         case "tabUpdated":
             if let tab = TabInfo(msg["tab"]) { history.tabUpdated(tab) }
-        case "tabRemoved":
+        case "tabReplaced":
+            if let old = msg["oldTabId"] as? Int, let tab = TabInfo(msg["tab"]) { history.tabReplaced(old, with: tab) }
+        case "tabRemoved", "activateFailed":
+            // A tab that can't be switched to is gone; a fresh snapshot follows.
             if let id = msg["tabId"] as? Int { history.tabRemoved(id) }
         default:
             break
