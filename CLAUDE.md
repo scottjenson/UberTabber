@@ -4,7 +4,7 @@ UberTabber is a **UX experiment, not a product**: one most-recently-used switche
 
 ## Layout
 
-- `extension/`: Chrome extension (MV3, `background.js` only). Reports raw tab/window events and each site's large icon to the app over a WebSocket (`ws://127.0.0.1:47821`) and performs `activate` commands. **No history logic here**; the app owns it.
+- `extension/`: Chrome extension (MV3, `background.js` only). One copy per Chrome profile; each tags its tabs with a random `profileId` (kept in `chrome.storage`) and reports the profile's email in snapshots. Reports raw tab/window events and each site's large icon to the app over a WebSocket (`ws://127.0.0.1:47821`) and performs `activate` commands. **No history logic here**; the app owns it.
 - `app/`: Swift package (tools 5.9, macOS 14+), menu-bar app (`.accessory`, `LSUIElement`).
   - `AppDelegate.swift`: wiring. Switcher key handling, list reveal timer, voice hookup, switching (`switchTo`), extension message handling, menu-bar menu.
   - `History.swift`: the MRU list (`HistoryItem`: `.app(pid)` for windowless apps, `.window(pid, id)`, `.tab(id)`), launch seeding, all event handlers, `allItems()` (history, then never-used windows/apps/tabs).
@@ -13,6 +13,7 @@ UberTabber is a **UX experiment, not a product**: one most-recently-used switche
   - `Switcher.swift`: `SwitcherModel` + SwiftUI views in a non-activating `NSPanel`. Strip of 8 tiles + drop-down list.
   - `Matcher.swift`: tiered name-first ranking for typing and voice.
   - `Voice.swift`: on-device `SFSpeechRecognizer`; fresh `AVAudioEngine` per listen (see gotchas).
+  - `ProfileStore.swift`: maps profile IDs to Chrome profiles by email via Chrome's `Local State` (`profile.info_cache`) and serves avatar badges from `<folder>/Google Profile Picture.png`.
   - `IconStore.swift`, `EventLog.swift`: icon caches, JSONL log.
   - `ExtensionServer.swift`: WebSocket server. Accepts only `Origin: chrome-extension://…` (any web page can open a socket to localhost); rejections log `extensionRejected`.
 
@@ -36,6 +37,7 @@ There are no tests. The user tests by hand; don't spin up screenshots for simple
 
 - **Option-Tab** by default so Apple's Cmd-Tab stays available for comparison; menu toggle "Use Command-Tab instead of Option-Tab" (UserDefaults `useCommandTab`).
 - **Looks like Cmd-Tab**: solid `#9F9F9F` backdrop (measured), radius 58; tiles `square = 117` with icons drawn on a `canvas = 128` to absorb app icons' built-in margin; only the selected tile is labeled, truncated within the tile plus its gaps. A window's label is its title's first part (app name if untitled), like a tab's; the icon says which app. Tab icons inset to 0.81 like app artwork. **No Chrome badge**: blurring tab vs. window is the point.
+- **Profile badge only on non-primary profiles.** Chrome's `Default` folder is primary and unbadged, so with one profile nothing changes; other profiles' tabs get their avatar at the icon's lower right. No email (old extension, unsigned profile) means no badge.
 - **Strip of 8**, most recent first, second item selected; Chrome itself never appears (its tabs stand in). Each app window is its own item ("windows everywhere"); apps with no windows appear once (Finder must, so you needn't open a window first). **Menu-bar apps appear only through their windows**, never on their own.
 - **Show delay 150 ms** so a quick tap-and-release switches with no flash.
 - **List reveal**: after a further **500 ms pause** (every key press restarts the timer, so steady tabbing never shows it), or immediately on ↓ or typing. Replaced an earlier "reveal on reaching the third item" rule the user found clunky.
@@ -49,6 +51,8 @@ There are no tests. The user tests by hand; don't spin up screenshots for simple
 ## Gotchas learned the hard way
 
 - **Chrome tab IDs change** when Chrome unloads long-unused tabs (Memory Saver). The extension handles `onReplaced` and, if an `activate` ID is stale, falls back to the tab with the same URL and reports `tabReplaced`; truly gone tabs report `activateFailed` and trigger a snapshot. Users leave tabs for days, so this must stay robust.
+- **Multiple profiles share one socket.** A snapshot replaces only its own profile's tabs, and `activate` carries `profile` so other profiles ignore it. Tab IDs are assumed unique across profiles (unverified).
+- **Windowless apps need a reopen event.** Electron apps like Granola hide their window on close; AX frontmost does nothing. `switchTo` uses `NSWorkspace.openApplication` for `.app` items, like a Dock click.
 - **Quit apps can linger** via late notifications; `History.allItems()` prunes items whose process is gone.
 - **Mic indicator**: a long-lived `AVAudioEngine` that has touched the input keeps the mic claimed; create one per listen and release it.
 - **`NSRunningApplication.activate()` is unreliable** from a background app; use AX `kAXFrontmostAttribute`, then `kAXRaiseAction`/`kAXMainAttribute` for a specific window.
@@ -63,5 +67,5 @@ There are no tests. The user tests by hand; don't spin up screenshots for simple
 - Switching to another app's window can briefly flash that app's previous front window.
 - Windows on other Spaces may not appear until visited.
 - Large site icons cached in memory only (first open after launch may show small favicons).
-- Chrome only; other profiles need the extension loaded separately.
+- Chrome only; other profiles need the extension loaded separately. A closed profile's tabs linger in the list.
 - Ideas floated: log analysis script, tab snapshots instead of icons, repeat-to-cycle for voice (user wanted to see if tiers suffice first).

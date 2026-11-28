@@ -5,7 +5,22 @@
 const PORT = 47821;
 let ws = null;
 
+// Each Chrome profile runs its own copy of this extension. A random ID saved in
+// the profile's storage tells them apart for good; the signed-in email lets the
+// app find the profile's avatar.
+let profileId = null;
+let profileEmail = "";
+
+async function loadProfile() {
+  const stored = await chrome.storage.local.get("profileId");
+  profileId = stored.profileId || crypto.randomUUID();
+  if (!stored.profileId) await chrome.storage.local.set({ profileId });
+  const info = await chrome.identity.getProfileUserInfo({ accountStatus: "ANY" }).catch(() => null);
+  profileEmail = (info && info.email) || "";
+}
+
 function connect() {
+  if (!profileId) return;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
   ws.onopen = sendSnapshot;
@@ -30,6 +45,7 @@ function tabInfo(tab) {
     url: tab.url,
     favIconUrl: tab.favIconUrl,
     active: tab.active,
+    profile: profileId,
   };
 }
 
@@ -40,6 +56,8 @@ async function sendSnapshot() {
   const win = await chrome.windows.getLastFocused().catch(() => null);
   send({
     type: "snapshot",
+    profile: profileId,
+    email: profileEmail,
     tabs: tabs.map(tabInfo),
     focusedWindowId: win && win.focused ? win.id : null,
     lastFocusedWindowId: win ? win.id : null,
@@ -106,6 +124,8 @@ async function findIcon(tab) {
 }
 
 async function handleCommand(cmd) {
+  // Commands go to every profile; act only on our own tabs.
+  if (cmd.profile && cmd.profile !== profileId) return;
   if (cmd.cmd === "activate") activate(cmd);
 }
 
@@ -165,4 +185,4 @@ chrome.alarms.create("reconnect", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener(connect);
 setInterval(() => send({ type: "ping" }), 20000);
 
-connect();
+loadProfile().then(connect);

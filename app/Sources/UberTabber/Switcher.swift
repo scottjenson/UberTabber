@@ -6,7 +6,7 @@ import SwiftUI
 struct Entry {
     enum Icon {
         case app(NSImage?)
-        case tab(large: NSImage?, favicon: NSImage?, tint: NSColor?)
+        case tab(large: NSImage?, favicon: NSImage?, tint: NSColor?, badge: ProfileStore.Badge?)
     }
     let item: HistoryItem
     let label: String       // short, under a strip tile
@@ -305,7 +305,7 @@ private struct IconView: View {
             switch icon {
             case .app(let image):
                 if let image { Image(nsImage: image).resizable().interpolation(.high) } else { Color.clear }
-            case .tab(let large, let favicon, let tint):
+            case .tab(let large, let favicon, let tint, let badge):
                 let inner = size * 0.81
                 Group {
                     if let large {
@@ -325,9 +325,42 @@ private struct IconView: View {
                 }
                 .frame(width: inner, height: inner)
                 .clipShape(RoundedRectangle(cornerRadius: inner * 0.225, style: .continuous))
+                .overlay(alignment: .bottomTrailing) {
+                    if let badge { ProfileBadge(badge: badge, size: max(inner * 0.32, 11)) }
+                }
             }
         }
         .frame(width: size, height: size)
+    }
+}
+
+/// A tab from a non-primary Chrome profile: its avatar, in a thin light ring,
+/// straddling the icon's lower-right corner.
+private struct ProfileBadge: View {
+    let badge: ProfileStore.Badge
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            switch badge {
+            case .picture(let image):
+                Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
+            case .initial(let letter):
+                ZStack {
+                    Color(white: 0.45)
+                    if letter.isEmpty {
+                        Image(systemName: "person.fill").resizable().scaledToFit().padding(size * 0.22)
+                    } else {
+                        Text(letter).font(.system(size: size * 0.55, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(.white)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color.white.opacity(0.9), lineWidth: max(size * 0.06, 1)))
+        .offset(x: size * 0.15, y: size * 0.15)
     }
 }
 

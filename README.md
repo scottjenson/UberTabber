@@ -27,13 +27,13 @@ This is an experiment, not a product. Expect rough edges.
    - **Accessibility** (System Settings → Privacy & Security → Accessibility → UberTabber): needed for the Option-Tab hotkey, tracking windows and switching. Option-Tab starts working a couple of seconds after it's granted.
    - **Speech Recognition** and **Microphone**: optional, for voice. Without them everything else works.
 
-3. **Load the Chrome extension** (once): open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and choose the `extension/` folder. Chrome will ask for access to all websites; that's used to find each site's large icon. The extension connects to the app by itself within about 30 seconds (or click its reload button).
+3. **Load the Chrome extension** (once): open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and choose the `extension/` folder. Chrome will ask for access to all websites (used to find each site's large icon) and to read your signed-in email (used to tell profiles apart). Load it in each Chrome profile whose tabs you want. The extension connects to the app by itself within about 30 seconds (or click its reload button).
 
 ## Using it
 
 **Option-Tab** opens the switcher after a short delay, so a quick tap-and-release just flips back to what you were last doing, with no flash.
 
-- **The strip** shows the 8 most recent items, with the second one selected. Each app window and each Chrome tab is its own item; Chrome itself never appears, its tabs stand in for it. A window is labeled with its title, like a tab. Apps with no open windows appear once, by name; menu-bar apps only appear while one of their windows is open.
+- **The strip** shows the 8 most recent items, with the second one selected. Each app window and each Chrome tab is its own item; Chrome itself never appears, its tabs stand in for it. A window is labeled with its title, like a tab. Apps with no open windows appear once, by name, and choosing one reopens it as a Dock click would; menu-bar apps only appear while one of their windows is open. Tabs from a Chrome profile other than your main ("Default") one carry that profile's avatar in the corner.
 - **Move** with Tab / Shift-Tab, the arrow keys, or the mouse (moving the pointer over an item selects it, and the keyboard carries on from there).
 - **Switch** by releasing Option, pressing Return, or clicking. **Esc** cancels.
 
@@ -48,7 +48,7 @@ The **menu-bar icon** shows the extension's connection status and the same histo
 
 ## Known limitations
 
-- Chrome only (no Safari, Firefox or Arc yet). Tabs in other Chrome profiles need the extension loaded in each profile.
+- Chrome only (no Safari, Firefox or Arc yet). Tabs in other Chrome profiles need the extension loaded in each profile, and a profile not signed in to Chrome gets no avatar.
 - Windows on other Spaces may not appear until you've visited them.
 - Switching to a window or tab in another app can briefly show that app's previous front window.
 - Large site icons are cached in memory only, so the first Option-Tab after launch may show small favicons.

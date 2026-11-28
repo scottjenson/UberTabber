@@ -8,6 +8,7 @@ struct TabInfo {
     var url: String
     var favIconUrl: String?
     var active: Bool
+    var profile: String     // which Chrome profile's extension reported it
 
     var host: String { URL(string: url)?.host ?? "" }
 
@@ -22,6 +23,7 @@ struct TabInfo {
         self.url = d["url"] as? String ?? ""
         self.favIconUrl = d["favIconUrl"] as? String
         self.active = d["active"] as? Bool ?? false
+        self.profile = d["profile"] as? String ?? ""
     }
 
     /// Page title without the site name, which the icon already shows:
@@ -180,8 +182,10 @@ final class History {
 
     // MARK: Extension events
 
-    func snapshot(_ all: [TabInfo], lastFocusedWindowId: Int?) {
-        tabs = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+    /// One profile's full tab list; other profiles' tabs are kept.
+    func snapshot(_ all: [TabInfo], profile: String, lastFocusedWindowId: Int?) {
+        tabs = tabs.filter { $0.value.profile != profile }
+        for tab in all { tabs[tab.id] = tab }
         items.removeAll { if case .tab(let id) = $0 { return tabs[id] == nil } else { return false } }
         // First report after launch: Chrome's current tab takes Chrome's seeded place.
         if let slot = chromeSlot,

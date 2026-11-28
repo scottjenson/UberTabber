@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let server = ExtensionServer()
     private let log = EventLog()
     private let icons = IconStore()
+    private let profiles = ProfileStore()
     private let hotKey = HotKey()
     private let switcher = SwitcherPanel()
     private let voice = Voice()
@@ -212,7 +213,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                          subtitle: tab?.host ?? "",
                          icon: .tab(large: tab.flatMap { icons.largeIcon(host: $0.host) },
                                     favicon: icons.favicon(tab?.favIconUrl),
-                                    tint: icons.tint(tab?.favIconUrl)),
+                                    tint: icons.tint(tab?.favIconUrl),
+                                    badge: tab.flatMap { profiles.badge(for: $0.profile) }),
                          names: [tab?.shortTitle ?? ""],
                          rest: "\(tab?.title ?? "") \(tab?.host ?? "")")
         }
@@ -221,7 +223,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func switchTo(_ item: HistoryItem) {
         switch item {
         case .app(let pid):
-            bringToFront(pid)
+            // No visible window: open it like a Dock click, which also sends
+            // the "reopen" event apps like Granola need to show their window.
+            if let url = NSRunningApplication(processIdentifier: pid)?.bundleURL {
+                NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+            } else {
+                bringToFront(pid)
+            }
         case .window(let pid, let id):
             bringToFront(pid)
             history.windows.raise(id)
@@ -229,7 +237,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let tab = history.tabs[id] else { return }
             // The URL lets the extension find the tab if Chrome has given it a new ID.
             log.write(["type": "activateTab", "tabId": tab.id, "url": tab.url])
-            server.send(["cmd": "activate", "tabId": tab.id, "windowId": tab.windowId, "url": tab.url])
+            server.send(["cmd": "activate", "tabId": tab.id, "windowId": tab.windowId, "url": tab.url,
+                         "profile": tab.profile])
             if let chrome = NSRunningApplication.runningApplications(withBundleIdentifier: History.chromeBundleID).first {
                 bringToFront(chrome.processIdentifier)
             }
@@ -255,7 +264,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "snapshot":
             let tabs = (msg["tabs"] as? [Any] ?? []).compactMap(TabInfo.init)
             tabs.forEach { icons.prefetchFavicon($0.favIconUrl) }
-            history.snapshot(tabs, lastFocusedWindowId: msg["lastFocusedWindowId"] as? Int)
+            let profile = msg["profile"] as? String ?? ""
+            profiles.register(profile, email: msg["email"] as? String ?? "")
+            history.snapshot(tabs, profile: profile, lastFocusedWindowId: msg["lastFocusedWindowId"] as? Int)
         case "siteIcon":
             if let origin = msg["origin"] as? String, let host = URL(string: origin)?.host,
                let url = msg["iconUrl"] as? String {
